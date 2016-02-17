@@ -3,39 +3,40 @@ package javax.server;
 public class ClientAdapter implements ClientListener {
 
 	@Override
-	public void messageReceived(Object msg) {
+	public void messageReceived(Client client, Object msg) {
 		// TODO Auto-generated method stub
-
+		
 	}
 
 	@Override
-	public void commandReceived(Command cmd) {
+	public void commandReceived(Client client, Command cmd) {
 		// TODO Auto-generated method stub
-
+		
 	}
 
 	@Override
-	public void disconnected() {
+	public void disconnected(Client client) {
 		// TODO Auto-generated method stub
-
+		
 	}
 
 	@Override
-	public void messageSent(Object msg) {
+	public void messageSent(Client client, Object msg) {
 		// TODO Auto-generated method stub
-
+		
 	}
 
 	@Override
-	public void commandSent(Command cmd) {
+	public void commandSent(Client client, Command cmd) {
 		// TODO Auto-generated method stub
-
+		
 	}
 
 	@Override
-	public void connected() {
+	public void connected(Client client) {
 		// TODO Auto-generated method stub
-
+		
 	}
+
 
 }
