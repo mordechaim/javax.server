@@ -1,17 +1,19 @@
 package javax.server;
 
+import javax.server.Server.ConnectionToClient;
+
 public interface ServerListener {
 	
-	public void clientConnected(int id);
+	public void clientConnected(Server server, ConnectionToClient client);
 	
-	public void messageReceived(int id, Object msg);
+	public void messageReceived(Server server, ConnectionToClient client, Object msg);
 	
-	public void commandReceived(int id, Command cmd);
+	public void commandReceived(Server server, ConnectionToClient client, Command cmd);
 	
-	public void clientDisconnected(int id);
+	public void clientDisconnected(Server server, ConnectionToClient client);
 	
-	public void messageSent(int toId, Object msg);
+	public void messageSent(Server server, ConnectionToClient toClient, Object msg);
 	
-	public void commandSent(int toId, Command cmd);
+	public void commandSent(Server server, ConnectionToClient toClient, Command cmd);
 
 }

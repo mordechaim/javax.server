@@ -12,7 +12,7 @@ import java.util.Random;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
- * This base class, represents a standard server where clients (that subclass
+ * This class, represents a standard server where clients (that use, or subclass
  * {@linkplain Client}) can connect and interact with. Its implementation uses
  * low level sockets without any protocol.
  * 
@@ -44,12 +44,21 @@ public class Server {
 	private int port;
 
 	/*
+	 * The amount of message handling threads.
+	 */
+	private int messageHandlingThreadCount;
+
+	/*
 	 * whether the server is active.
 	 */
 	private volatile boolean running;
 
 	private volatile boolean alive;
 
+	/*
+	 * Limit of allowed connections, negative means infinite.
+	 */
+	private int clientLimit;
 	/*
 	 * where listeners are saved.
 	 */
@@ -62,7 +71,14 @@ public class Server {
 	public static final int TIMEOUT = 10000;
 
 	/**
-	 * Constructs a {@code Server} listening for clients on specified port.
+	 * Constructs a {@code Server} listening for clients on specified port, and
+	 * specified amount of message handling threads. If the given thread count
+	 * is less than one, it will automatically be adjusted to 1.
+	 * 
+	 * <p>
+	 * Please Note: Setting the thread count to more than one, may cause the
+	 * listeners to receive messages asynchronously. Use synchronization as
+	 * needed, or reconsider using multiple threads.
 	 * 
 	 * <p>
 	 * The server immediately starts running at construction, no other
@@ -71,23 +87,45 @@ public class Server {
 	 * 
 	 * @param port
 	 *            The port to listen for.
+	 * @param messageHandlingThreadCount
+	 *            The amount of message handling threads, reading asynchronously
+	 *            for incoming messages.
+	 * 
 	 */
-	public Server(int port) {
+	public Server(int port, int messageHandlingThreadCount) {
 		this.port = port;
 		clients = Collections.synchronizedMap(new HashMap<>());
 		messages = new LinkedBlockingQueue<>();
 		listeners = Collections.synchronizedList(new ArrayList<>());
+		this.messageHandlingThreadCount = Math.max(1, messageHandlingThreadCount);
+		clientLimit = -1;
 		alive = true;
 
 		addServerListener(new ServerAdapter() {
-			public void commandReceived(int id, Command cmd) {
+			@Override
+			public void commandReceived(Server server, ConnectionToClient ctc, Command cmd) {
 				if (cmd == ClientCommand.DISCONNECT) {
-					ConnectionToClient c = getClient(id);
-					if (c != null)
-						c.localShutDown();
+					ctc.localShutDown();
 				}
 			}
 		});
+	}
+
+	/**
+	 * Constructs a {@code Server} listening for clients on specified port, with
+	 * 1 message handling thread.
+	 * 
+	 * <p>
+	 * The server immediately starts running at construction, no other
+	 * initialization is required in order to work. it can be stopped, by
+	 * invoking {@code shutDown()}.
+	 * 
+	 * @param port
+	 *            The port to listen for.
+	 * 
+	 */
+	public Server(int port) {
+		this(port, 1);
 	}
 
 	/**
@@ -203,11 +241,7 @@ public class Server {
 	 * @return The connection for requested id.
 	 */
 	public ConnectionToClient getClient(int id) {
-		ConnectionToClient c = clients.get(id);
-		if (c != null && c.localRunning())
-			return c;
-		clients.remove(id);
-		return null;
+		return clients.get(id);
 	}
 
 	/**
@@ -216,9 +250,7 @@ public class Server {
 	 * @return A {@code Collection} of all active clients.
 	 */
 	public Collection<ConnectionToClient> getClients() {
-		Collection<ConnectionToClient> coll = clients.values();
-		coll.removeIf(c -> !c.localRunning());
-		return coll;
+		return clients.values();
 	}
 
 	/**
@@ -229,7 +261,18 @@ public class Server {
 	 * @return Whether is contains an active client for this id.
 	 */
 	public boolean containsId(int id) {
-		return getClient(id) != null;
+		return clients.containsKey(id);
+	}
+
+	/**
+	 * Returns the amount of threads that handles incoming messages,
+	 * asynchronously.
+	 * 
+	 * @return The amount of threads that handles incoming messages,
+	 *         asynchronously.
+	 */
+	public int getMessageHandlingThreadCount() {
+		return messageHandlingThreadCount;
 	}
 
 	/**
@@ -315,13 +358,15 @@ public class Server {
 		running = true;
 
 		Thread acception = new Thread(new Acception(), "Client acception thread");
-		Thread messageHandling = new Thread(new MessageHandling(), "Received messages handler thread");
+
+		for (int i = 0; i < messageHandlingThreadCount; i++) {
+			Thread t = new Thread(new MessageHandling(), "Received messages handler thread #" + i);
+			t.setDaemon(true);
+			t.start();
+		}
 
 		acception.setDaemon(true);
-		messageHandling.setDaemon(true);
-
 		acception.start();
-		messageHandling.start();
 
 		return true;
 	}
@@ -368,6 +413,49 @@ public class Server {
 	 */
 	synchronized public void unsync() {
 		notifyAll();
+	}
+
+	/**
+	 * Stops accepting new connections, and clears the accept mechanism
+	 * resources. The existing connections are preserved. There is no way to
+	 * accept again with this instance, once stopped.
+	 * 
+	 * <p>
+	 * In case a user chooses to limit the number of accepted clients, they
+	 * should rather use {@code setClientLimit()} since old clients may
+	 * disconnect, and in turn allow new clients;
+	 */
+	public void stopAccepting() {
+		try {
+			serverSocket.close();
+		} catch (IOException e) {
+		}
+		serverSocket = null;
+	}
+
+	/**
+	 * Rejects incoming connections, if the server reached the given limit. If
+	 * clients disconnects, new connections will be allowed again. To stop
+	 * accepting permanently use {@code stopAccepting()}. Use any negative to
+	 * allow infinite connections.
+	 * 
+	 * <p>
+	 * Note: Even if the connection will eventually be rejected, as it reached
+	 * the limit; it will still call {@code connectionInit()} (this has been
+	 * coded this way, not to block the client, as it waits some data in its
+	 * {@code connectionInit()}). The listeners will <i>not</i> be notified.
+	 * 
+	 * <p>
+	 * This method will only affect new connections. Setting the limit to lower
+	 * than currently connected clients, will only ensure not to accept new
+	 * until it reaches that number. Existing clients are preserved.
+	 */
+	public void setClientLimit(int limit) {
+		clientLimit = limit;
+	}
+
+	public int getClientLimit() {
+		return clientLimit;
 	}
 
 	/**
@@ -450,7 +538,7 @@ public class Server {
 	private class Acception implements Runnable {
 
 		public void run() {
-			while (running()) {
+			while (running() && !serverSocket.isClosed()) {
 				Socket socket = null;
 				ObjectInputStream in = null;
 				ObjectOutputStream out = null;
@@ -513,7 +601,7 @@ public class Server {
 
 							ctc = connectionInit(id, socket, in, out);
 						}
-						if (ctc != null) {
+						if (ctc != null && (clientLimit < 0 || clientLimit > clients.size())) {
 							clients.put(id, ctc);
 							out.writeObject(ServerCommand.CONNECTED);
 							force(out);
@@ -523,19 +611,18 @@ public class Server {
 								out.writeObject(ServerCommand.REJECT_CONNECTION);
 								force(out);
 							}
-							in.close();
-							out.close();
+							socket.close();
 							return;
 						}
 
-					} catch (IOException | ClassNotFoundException e) {
-						System.out.println(e);
+					} catch (Throwable t) {
+						System.out.println(t);
 						try {
 							if (!socket.isClosed())
 								out.writeObject(ServerCommand.ERROR_CONNECTION);
 							in.close();
 							out.close();
-						} catch (IOException e1) {
+						} catch (IOException e) {
 						}
 						return;
 					}
@@ -547,7 +634,7 @@ public class Server {
 
 					ctc.localStart();
 					for (ServerListener sl : listeners)
-						sl.clientConnected(id);
+						sl.clientConnected(Server.this, ctc);
 				}
 			};
 
@@ -575,14 +662,14 @@ public class Server {
 
 						if (m.msg != null)
 							for (ServerListener sl : listeners)
-								sl.commandReceived(m.id, (Command) m.msg);
+								sl.commandReceived(Server.this, getClient(m.id), (Command) m.msg);
 
 					} else {
 						m.msg = messageReceivedInit(m.id, m.msg);
 
 						if (m.msg != null)
 							for (ServerListener sl : listeners)
-								sl.messageReceived(m.id, m.msg);
+								sl.messageReceived(Server.this, getClient(m.id), m.msg);
 					}
 				} catch (InterruptedException e) {
 				} catch (RuntimeException rte) {
@@ -710,22 +797,44 @@ public class Server {
 		protected boolean send(Serializable msg) {
 			if (!localRunning || socket.isClosed())
 				return false;
+
+			msg = sendInit(msg);
+			if (msg == null)
+				return false;
+
 			try {
 				out.writeObject(msg);
 				force(out);
 
 				if (msg instanceof Command)
 					for (ServerListener sl : listeners)
-						sl.commandSent(clientId, (Command) msg);
+						sl.commandSent(Server.this, this, (Command) msg);
 				else
 					for (ServerListener sl : listeners)
-						sl.messageSent(clientId, msg);
+						sl.messageSent(Server.this, this, msg);
 
 				return true;
 			} catch (IOException e) {
 				localShutDown();
 				return false;
 			}
+		}
+
+		/**
+		 * A subclass may work with an object asked to send, here (e.g. encode).
+		 * Only the returned object will be sent. Returning {@code null} will
+		 * successfully abort the sending of this message.
+		 * 
+		 * <p>
+		 * This implementation simply returns the same object, given as
+		 * argument.
+		 * 
+		 * @param msg
+		 *            The message asked to be sent.
+		 * @return The actual message to send.
+		 */
+		protected Serializable sendInit(Serializable msg) {
+			return msg;
 		}
 
 		/**
@@ -764,6 +873,7 @@ public class Server {
 				out.close();
 			} catch (IOException e) {
 			}
+
 			/*
 			 * makes sure diconnectionInit may not cause StackOverflowError if
 			 * they call shutDown()
@@ -774,8 +884,10 @@ public class Server {
 			if (init) {
 				disconnectionInit();
 				for (ServerListener sl : listeners)
-					sl.clientDisconnected(clientId);
+					sl.clientDisconnected(Server.this, this);
 			}
+
+			clients.remove(clientId);
 
 		}
 

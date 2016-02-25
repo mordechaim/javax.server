@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.io.*;
 
 /**
- * This base class, represents a client which can connect to a server (that
+ * This class, represents a client which can connect to a server (that uses, or
  * subclasses {@linkplain Server}) and interact with. Its implementation uses
  * low level sockets without any protocol.
  * 
@@ -79,7 +79,7 @@ public class Client {
 	 * @param port
 	 *            The port to listen for.
 	 */
-	public Client(String serverAddress, int port) throws SocketException {
+	public Client(String serverAddress, int port) {
 		this.serverAddress = serverAddress;
 		this.port = port;
 		id = new AtomicInteger(0);
@@ -88,7 +88,8 @@ public class Client {
 		alive = true;
 
 		addClientListener(new ClientAdapter() {
-			public void commandReceived(Command cmd) {
+			@Override
+			public void commandReceived(Client client, Command cmd) {
 				if (cmd == ServerCommand.DISCONNECTED)
 					shutDown();
 			}
@@ -129,7 +130,8 @@ public class Client {
 	 * 
 	 * <p>
 	 * It is also guaranteed that the value will never be 0, as long this client
-	 * is connected to server. Once disconnected, the id will always be 0.
+	 * is connected to server. Once disconnected and notified listeners, the id
+	 * will always be 0.
 	 * 
 	 * @return This clients unique ID, assigned by server.
 	 */
@@ -360,7 +362,7 @@ public class Client {
 		connection.startReading();
 
 		for (ClientListener cl : listeners)
-			cl.connected();
+			cl.connected(this);
 
 		return true;
 	}
@@ -427,8 +429,6 @@ public class Client {
 		if (con == null)
 			return;
 
-		id.set(0);
-
 		try {
 			if (!con.socket.isClosed())
 				con.out.writeObject(ClientCommand.DISCONNECT);
@@ -440,8 +440,9 @@ public class Client {
 
 		disconnectionInit();
 		for (ClientListener cl : listeners)
-			cl.disconnected();
+			cl.disconnected(this);
 
+		id.set(0);
 		unsync();
 	}
 
@@ -470,6 +471,10 @@ public class Client {
 		ConnectionToServer cts = null;
 		try {
 			Object handShake = in.readObject();
+			if (handShake != ServerCommand.HANDSHAKE) {
+				System.err.println("Unknown server. Disconnecting...");
+				return null;
+			}
 			out.writeObject(ClientCommand.HANDSHAKE);
 			force(out);
 			id.set(in.readInt());
@@ -477,10 +482,7 @@ public class Client {
 			cts = connectionInit(socket, in, out);
 
 			Object connected = in.readObject();
-			if (handShake != ServerCommand.HANDSHAKE) {
-				System.err.println("Unknown server. Disconnecting...");
-				return null;
-			}
+
 			if (connected != ServerCommand.CONNECTED) {
 				System.err.println(connected);
 				return null;
@@ -488,7 +490,6 @@ public class Client {
 
 		} catch (ClassNotFoundException | IOException e) {
 			e.printStackTrace();
-			System.out.println(e); // debugging
 			return null;
 		}
 		try {
@@ -516,14 +517,14 @@ public class Client {
 
 						if (msg != null)
 							for (ClientListener cl : listeners)
-								cl.commandReceived((Command) msg);
+								cl.commandReceived(Client.this, (Command) msg);
 
 					} else {
 						msg = messageReceivedInit(msg);
 
 						if (msg != null)
 							for (ClientListener cl : listeners)
-								cl.messageReceived(msg);
+								cl.messageReceived(Client.this, msg);
 
 					}
 				} catch (InterruptedException e) {
@@ -629,6 +630,11 @@ public class Client {
 		protected boolean send(Serializable msg) {
 			if (msg == null)
 				return false;
+
+			msg = sendInit(msg);
+			if (msg == null)
+				return false;
+
 			try {
 				if (socket.isClosed()) {
 					shutDown();
@@ -639,15 +645,32 @@ public class Client {
 
 				if (msg instanceof Command)
 					for (ClientListener cl : listeners)
-						cl.commandSent((Command) msg);
+						cl.commandSent(Client.this, (Command) msg);
 				else
 					for (ClientListener cl : listeners)
-						cl.messageSent(msg);
+						cl.messageSent(Client.this, msg);
 
 				return true;
 			} catch (IOException e) {
 				return false;
 			}
+		}
+
+		/**
+		 * A subclass may work with an object asked to send, here (e.g. encode).
+		 * Only the returned object will be sent. Returning {@code null} will
+		 * successfully abort the sending of this message.
+		 * 
+		 * <p>
+		 * This implementation simply returns the same object, given as
+		 * argument.
+		 * 
+		 * @param msg
+		 *            The message asked to be sent.
+		 * @return The actual message to send.
+		 */
+		protected Serializable sendInit(Serializable msg) {
+			return msg;
 		}
 
 		@Override

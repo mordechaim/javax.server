@@ -2,16 +2,16 @@ package javax.server;
 
 public interface ClientListener {
 
-	public void messageReceived(Object msg);
+	public void messageReceived(Client client, Object msg);
 
-	public void commandReceived(Command cmd);
+	public void commandReceived(Client client, Command cmd);
 
-	public void disconnected();
+	public void disconnected(Client client);
 
-	public void messageSent(Object msg);
+	public void messageSent(Client client, Object msg);
 
-	public void commandSent(Command cmd);
+	public void commandSent(Client client, Command cmd);
 
-	public void connected();
+	public void connected(Client client);
 	
 }
