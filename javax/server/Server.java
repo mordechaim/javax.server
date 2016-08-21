@@ -81,7 +81,7 @@ public class Server {
 	 * needed, or reconsider using multiple threads.
 	 * 
 	 * <p>
-	 * Start the server by calling {@code start()}. It can be stopped, by
+	 * The server will start running when the {@code start()} method is invoked. It can be stopped, by
 	 * invoking {@code shutDown()}.
 	 * 
 	 * @param port
@@ -115,7 +115,7 @@ public class Server {
 	 * 1 message handling thread.
 	 * 
 	 * <p>
-	 * Start the server by calling {@code start()}. It can be stopped, by
+	 * The server will start running when the {@code start()} method is invoked. It can be stopped, by
 	 * invoking {@code shutDown()}.
 	 * 
 	 * @param port
