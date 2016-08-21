@@ -81,8 +81,7 @@ public class Server {
 	 * needed, or reconsider using multiple threads.
 	 * 
 	 * <p>
-	 * The server immediately starts running at construction, no other
-	 * initialization is required in order to work. it can be stopped, by
+	 * Start the server by calling {@code start()}. It can be stopped, by
 	 * invoking {@code shutDown()}.
 	 * 
 	 * @param port
@@ -116,8 +115,7 @@ public class Server {
 	 * 1 message handling thread.
 	 * 
 	 * <p>
-	 * The server immediately starts running at construction, no other
-	 * initialization is required in order to work. it can be stopped, by
+	 * Start the server by calling {@code start()}. It can be stopped, by
 	 * invoking {@code shutDown()}.
 	 * 
 	 * @param port
